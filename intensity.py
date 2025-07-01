@@ -3,76 +3,87 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 
-#clear previous frames
-folder = 'frames/'
 
-for filename in os.listdir(folder):
-    file_path = os.path.join(folder, filename)
-    if os.path.isfile(file_path):
-        os.remove(file_path)
-# Input video path
-video_path = '8pt6C1mlmin100 - Copy.MP4'
 
-# Create output directory for frames
-output_dir = 'frames'
-os.makedirs(output_dir, exist_ok=True)
+# %% EXTRACTING FRAMES -------------------------------------------
+def extract(path):
 
-# Open the video file
-cap = cv2.VideoCapture(video_path)
+    #clear previous frames
+    folder = 'frames/'
 
-# Extracting frames
-frame_num = 0
+    for filename in os.listdir(folder):
+        file_path = os.path.join(folder, filename)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+    # Input video path
+    video_path = path
 
-counter =0
-while cap.isOpened():
-    ret, frame = cap.read()
-    if not ret:
-        break  # End of video
-    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    # Create output directory for frames
+    output_dir = 'frames'
+    os.makedirs(output_dir, exist_ok=True)
 
-    # Split color channels
-    r, g, b = cv2.split(frame_rgb)
-    green_channel = frame[:, :, 1]
-    frame[:, :, 0] = 0  # Blue channel
-    frame[:, :, 2] = 0  # Red channel
+    # Open the video file
+    cap = cv2.VideoCapture(video_path)
 
-    #Counts frames before injection starts
+    # Extracting frames
+    frame_num = 0
+
+    counter =0
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break  # End of video
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        # Split color channels
+        r, g, b = cv2.split(frame_rgb)
+        green_channel = frame[:, :, 1]
+        frame[:, :, 0] = 0  # Blue channel
+        frame[:, :, 2] = 0  # Red channel
+
+        #Counts frames before injection starts
+        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(green_channel)
+        if max_val < 255:
+            counter += 1
+
+        
+        # Save current frame as image
+        frame_filename = os.path.join(output_dir, f'frame_{frame_num:04d}.jpg')
+        cv2.imwrite(frame_filename, frame)
+        
+        frame_num += 1
+
+    cap.release()
+    frames_folder = 'frames/'
+    frame_files = sorted(f for f in os.listdir(frames_folder)
+                        if f.endswith(('.png', '.jpg')))
+    print(f"Done! Extracted {frame_num} frames to '{output_dir}/'")
+    print(f"Done! Extracted {len(frame_files)} frames to '{output_dir}/'")
+
+    return frames_folder, frame_files, counter
+
+# %% CENTERING ------------------------------------------------------
+
+def find_center(folder,files, count) : 
+    frames_folder = folder
+    frame_files = files
+    counter = count
+    img = cv2.imread(os.path.join(frames_folder, frame_files[counter+1]))  # first frame with pure water
+
+
+    green_channel = img[:, :, 1]
+
+    # Find the location of the maximum green value in frame where injection begins
     min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(green_channel)
-    if max_val < 255:
-        counter += 1
 
-    
-    # Save current frame as image
-    frame_filename = os.path.join(output_dir, f'frame_{frame_num:04d}.jpg')
-    cv2.imwrite(frame_filename, frame)
-    
-    frame_num += 1
-
-cap.release()
-frames_folder = 'frames/'
-frame_files = sorted(f for f in os.listdir(frames_folder)
-                     if f.endswith(('.png', '.jpg')))
-print(f"Done! Extracted {frame_num} frames to '{output_dir}/'")
-print(f"Done! Extracted {len(frame_files)} frames to '{output_dir}/'")
-
-# setup for functions
-
-
-img = cv2.imread(os.path.join(frames_folder, frame_files[counter+1]))  # first frame with pure water
-
-
-green_channel = img[:, :, 1]
-
-# Find the location of the maximum green value in frame where injection begins
-min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(green_channel)
-
-print(f"Brightest green pixel intensity: {max_val}")
-print(f"Location (x, y): {max_loc}") 
-x,y =max_loc
-marked_img = img.copy()
-cv2.circle(marked_img, (x, y), radius=5, color=(0, 0, 255), thickness=2)
-# Save image with brightest pixel marked
-cv2.imwrite('marked_brightest_green.jpg', marked_img)
+    print(f"Brightest green pixel intensity: {max_val}")
+    print(f"Location (x, y): {max_loc}") 
+    x,y =max_loc
+    marked_img = img.copy()
+    cv2.circle(marked_img, (x, y), radius=5, color=(0, 0, 255), thickness=2)
+    # Save image with brightest pixel marked
+    cv2.imwrite('marked_brightest_green.jpg', marked_img)
+    return max_loc
 
 
 
@@ -80,11 +91,16 @@ cv2.imwrite('marked_brightest_green.jpg', marked_img)
 
 
 
+# %% FIND INTENSITY -------------------------------------------------------
 
 #function for finding average intensity of whole cell
-def find_avg():
+def find_intensity(folder,files,path, max):
+    frames_folder = folder
+    frame_files = files
     avg_green = []
     green = []
+    max_loc = max
+    x,y = max_loc
     print("Number of valid frames:", len(frame_files))
 
     for filename in frame_files:
@@ -108,75 +124,70 @@ def find_avg():
     #find and add the average intensities to a list
         avg_g = np.mean(masked_values)
         avg_green.append(avg_g) 
-
+    #recording values of single pixel (currently injection point)
         pixel = img[y,x]  
         green.append(pixel[1])
     return avg_green, green
 
 
-#function for finding intensity of a specific pixel
-def check_regions(folder):
-    
-
-    for filename in frame_files:
-        if filename.endswith('.png') or filename.endswith('.jpg'):
-            path = os.path.join(frames_folder, filename)
-            img = cv2.imread(path)
-            #choose injection point pixel (initially brightest)
-            
-
-    return green
-
-avg_green, green = find_avg()
 
 
-#converting y axis from frames to seconds
-fps = 30  
-times_in_seconds = [i / fps for i in range(len(avg_green))]
-#normalizing x axis
-avg_intensity = [(x) / (255) for x in avg_green]
-intensity = [(x) / (255) for x in green]
+# %% PLOTTING -------------------------------------------------------------
 
-print(len(avg_green))
+def plotting(avg,g, path):
+    avg_green = avg
+    green = g
+    video_path = path
+    #converting y axis from frames to seconds
+    fps = 30  
+    times_in_seconds = [i / fps for i in range(len(avg_green))]
+    #normalizing x axis
+    avg_intensity = [(x) / (255) for x in avg_green]
+    intensity = [(x) / (255) for x in green]
 
-#Plotting 
+    print(len(avg_green))
+
+    #Plotting 
 
 
-plt.figure(figsize=(10, 5))
-plt.ylim(0, 1)
-#plt.xlim(right=100)
+    plt.figure(figsize=(10, 5))
+    plt.ylim(0, 1)
+    #plt.xlim(right=100)
 
-plt.plot(times_in_seconds, avg_intensity, color='green')
+    plt.plot(times_in_seconds, avg_intensity, color='green')
 
 
-plt.title('Average Green Intensity Over Time')
-plt.xlabel('Seconds')
-plt.ylabel('Average Intensity')
-plt.legend()
-plt.savefig(video_path+'green_channel_only.png')
+    plt.title('Average Green Intensity Over Time')
+    plt.xlabel('Seconds')
+    plt.ylabel('Average Intensity')
+    plt.legend()
+    plt.savefig(video_path+'green_channel_only.png')
 
 
 
-plt.figure(figsize=(10, 5))
-plt.ylim(0, 1)
-#plt.xlim(right=100)
+    plt.figure(figsize=(10, 5))
+    plt.ylim(0, 1)
+    #plt.xlim(right=100)
 
-plt.plot(times_in_seconds, intensity, color='green')
+    plt.plot(times_in_seconds, intensity, color='green')
 
 
-plt.title('Green Intensity Over Time')
-plt.xlabel('Seconds')
-plt.ylabel('Intensity')
-plt.legend()
-plt.savefig(video_path+'green_channel.png')
+    plt.title('Green Intensity Over Time')
+    plt.xlabel('Seconds')
+    plt.ylabel('Intensity')
+    plt.legend()
+    plt.savefig(video_path+'green_channel.png')
 
-#testing
 
-print("Frame count:", len(frame_files))
-print("Image shape:", img.shape)
 
-for t, g in zip(times_in_seconds[:10], avg_green[:10]):
-    print(f"{t:.2f} s → {g}")
+
+path = '8pt6C1mlmin100 - Copy.MP4'
+files, folder, counter = extract(path)
+max = find_center(files,folder, counter)
+avg,g = find_intensity(files, folder, path, max)
+plotting(avg,g,path)
+
+
 
 
 
