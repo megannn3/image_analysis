@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+from scipy.ndimage import gaussian_filter1d
 
 
 
@@ -94,7 +95,7 @@ def find_center(folder,files, count) :
 # %% FIND INTENSITY -------------------------------------------------------
 
 #function for finding average intensity of whole cell
-def find_intensity(folder,files,path, max):
+def find_intensity(folder,files, max):
     frames_folder = folder
     frame_files = files
     avg_green = []
@@ -104,10 +105,13 @@ def find_intensity(folder,files,path, max):
     print("Number of valid frames:", len(frame_files))
 
     for filename in frame_files:
-        path = os.path.join(frames_folder, filename)
-        img = cv2.imread(path)  
+        img_path = os.path.join(frames_folder, filename)
+        img = cv2.imread(img_path)  
+        if img is None:
+            print("Warning: Couldn't read", img_path)
+            continue
         center_x, center_y = max_loc
-        radius = 400
+        radius = 380
 
 # Create a mask the same size as the image, with a white circle
         mask = np.zeros(img.shape[:2], dtype=np.uint8)  # single channel mask
@@ -115,7 +119,7 @@ def find_intensity(folder,files,path, max):
         cv2.circle(mask, (center_x, center_y), radius, 255, -1)  # fill circle with white
         cv2.circle(marked, (center_x, center_y), radius, color=(255, 255, 255), thickness=2)  
         # draw white border and save
-        cv2.imwrite('image_with_circle.jpg', marked)
+        
         
 
 # only keep pixels with white mask
@@ -127,6 +131,11 @@ def find_intensity(folder,files,path, max):
     #recording values of single pixel (currently injection point)
         pixel = img[y,x]  
         green.append(pixel[1])
+    
+    cv2.imwrite('image_with_circle.jpg', marked)
+
+    avg_green = gaussian_filter1d(avg_green, sigma=2)
+    green =gaussian_filter1d(green, sigma=2)
     return avg_green, green
 
 
@@ -178,14 +187,65 @@ def plotting(avg,g, path):
     plt.legend()
     plt.savefig(video_path+'green_channel.png')
 
+    plt.figure(figsize=(10, 5))
+    plt.plot(times_in_seconds[::2], avg_intensity[::2], color='green', label='Sampled')
+    plt.xlabel("Time (s)")
+    plt.ylabel("Intensity")
+    plt.title("Green Intensity (Sampled Every Other Point)")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(video_path+'green_channel_every_other.png')
+
+    for t, val in zip(times_in_seconds, avg_intensity):
+        if 100 <= t <= 110:
+            print(f"Time: {t:.2f} s, Intensity: {val:.3f}")
+
+
+    print("Frames processed:", len(avg_intensity), len(intensity))
+    print("Time entries:", len(times_in_seconds))
+    print("FPS used:", fps)
+    print("Any NaN in green values:", np.isnan(avg_intensity).any())
+    print("Any absurd values:", np.max(avg_intensity), np.min(avg_intensity))
 
 
 
-path = '8pt6C1mlmin100 - Copy.MP4'
+
+def derivative(video_path,intensity):
+    fps = 30  
+    times_in_seconds = [i / fps for i in range(len(intensity))]
+    
+
+    if np.array_equal(intensity, avg):
+        title = 'Average'
+    elif np.array_equal(intensity,g):
+        title = 'Point'
+    d_intensity = np.gradient(intensity,times_in_seconds)
+
+    print(len(times_in_seconds) )
+    print(len(np.unique(times_in_seconds)))
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(times_in_seconds, d_intensity , label='Rate of Change of Intensity')
+    plt.xlabel('Time (s)')
+    plt.ylabel('d(Intensity)/dt')
+    plt.title('Rate of Change of '+ title+  ' Intensity')
+
+    plt.legend()
+    plt.savefig(video_path+title+'derivative.png')
+
+
+
+
+
+
+
+path = '5mlmin_trimmed.MP4'
 files, folder, counter = extract(path)
 max = find_center(files,folder, counter)
-avg,g = find_intensity(files, folder, path, max)
+avg,g = find_intensity(files, folder, max)
 plotting(avg,g,path)
+derivative(path,avg)
 
 
 
