@@ -111,4 +111,4 @@ extract_thermal('3mlminthermal.mp4')
 video()
 
 
-# Load image and convert to grayscale or a single channel (e.g. green)
+

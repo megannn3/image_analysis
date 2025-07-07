@@ -239,13 +239,97 @@ def derivative(video_path,intensity):
 
 
 
+def contours(folder, files,path):
+    video_name = os.path.splitext(os.path.basename(path))[0]
+    input_folder = folder
+    # every 10 frames
+    image_files = files[::5]
+    first_img = cv2.imread(os.path.join(input_folder, image_files[0]))
+    height, width = first_img.shape[:2]
 
-path = '5mlmin_trimmed.MP4'
-files, folder, counter = extract(path)
-max = find_center(files,folder, counter)
-avg,g = find_intensity(files, folder, max)
-plotting(avg,g,path)
-derivative(path,avg)
+    background = np.ones((height, width, 3), dtype=np.uint8) * 255
+
+    threshold_value = 200
+    max_alpha = 1  # maximum transparency level for most consistent contours
+    batch_size = 50
+
+    # split into chunks
+    batches = [image_files[i:i + batch_size] for i in range(0, len(image_files), batch_size)]
+    
+    # Use float32 for better precision in accumulation
+    accumulated_mask = np.zeros((height, width), dtype=np.float32)
+
+    for batch_idx, batch in enumerate(batches):
+        print(f"Processing batch {batch_idx + 1} / {len(batches)}")
+        # Mask for this batch
+        batch_mask = np.zeros((height, width), dtype=np.uint8)
+
+        for filename in batch:
+            path = os.path.join(input_folder, filename)
+            img = cv2.imread(path)
+            if img is None:
+                continue
+
+            green = img[:, :, 1]
+            _, thresh = cv2.threshold(green, threshold_value, 255, cv2.THRESH_BINARY)
+            contours_found, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            # Draw contours in white on batch mask
+            cv2.drawContours(batch_mask, contours_found, -1, 255, thickness=1)
+
+        # Accumulate: add batch contours to accumulated_mask (normalize to 0-1)
+        accumulated_mask += batch_mask.astype(np.float32) / 255.0
+
+    # Normalize accumulated mask to create variable opacity
+    if np.max(accumulated_mask) > 0:
+        # Normalize to 0-1 range based on maximum consistency
+        normalized_mask = accumulated_mask / np.max(accumulated_mask)
+    else:
+        normalized_mask = accumulated_mask
+    
+    # Create variable alpha based on consistency
+    # More consistent areas (higher values) get higher alpha
+    variable_alpha = normalized_mask * max_alpha
+    
+    # Create the final result with variable opacity
+    result = background.astype(np.float32)
+    
+    # Apply variable darkening based on consistency
+    # Areas with more consistency (higher alpha) become darker
+    for i in range(3):  # Apply to all color channels
+        result[:, :, i] = result[:, :, i] * (1 - variable_alpha)
+    
+    # Convert back to uint8
+    result = np.clip(result, 0, 255).astype(np.uint8)
+
+    # Save final image
+    cv2.imwrite(video_name+'white_background_accumulated_contours.png', result)
+    print("Saved white_background_accumulated_contours.png")
+    
+    # Optional: Save a visualization of the consistency map
+    consistency_vis = (normalized_mask * 255).astype(np.uint8)
+    cv2.imwrite(video_name+'consistency_map.png', consistency_vis)
+    print("Saved consistency_map.png (shows consistency levels)")
+    
+    return result, normalized_mask
+
+
+
+
+
+
+
+path = '8pt6C1mlmin100 - Copy.MP4'
+folder, files, counter = extract(path)
+#max = find_center(folder,files, counter)
+#avg,g = find_intensity(folder, files, max)
+#plotting(avg,g,path)
+#derivative(path,avg)
+# folder = 'frames/'
+# files = sorted(f for f in os.listdir(folder) if f.endswith(('.png', '.jpg')))
+contours(folder,files,path)
+
+
 
 
 
