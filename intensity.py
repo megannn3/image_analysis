@@ -104,9 +104,27 @@ def find_intensity(folder,files, max):
     frame_files = files
     avg_green = []
     green = []
+    selected_point=[]
     max_loc = max
     x,y = max_loc
     print("Number of valid frames:", len(frame_files))
+    window_name = 'Select point'
+    choose_img_path = os.path.join(frames_folder, frame_files[int(len(frame_files)/2)])
+    choose_img = cv2.imread(choose_img_path)
+    
+    def click_event(event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            selected_point.append((x, y))
+            print(f"Selected point: ({x}, {y})")
+            cv2.destroyWindow(window_name)
+
+    cv2.imshow(window_name, choose_img)
+    cv2.setMouseCallback(window_name, click_event)
+
+    print("Click on the image to select a point...")
+    while not selected_point:
+        cv2.waitKey(1)
+
 
     for filename in frame_files:
         img_path = os.path.join(frames_folder, filename)
@@ -133,7 +151,9 @@ def find_intensity(folder,files, max):
         avg_g = np.mean(masked_values)
         avg_green.append(avg_g) 
     #recording values of single pixel (currently injection point)
-        pixel = img[y,x]  
+        x, y = selected_point[0]
+        pixel = img[int(y), int(x)]
+
         green.append(pixel[1])
     
     cv2.imwrite('image_with_circle.jpg', marked)
@@ -175,6 +195,7 @@ def plotting(avg,g, path):
     plt.ylabel('Average Intensity')
     plt.legend()
     plt.savefig(video_path+'green_channel_only.png')
+    print('plotted global intensity')
 
 
 
@@ -190,6 +211,7 @@ def plotting(avg,g, path):
     plt.ylabel('Intensity')
     plt.legend()
     plt.savefig(video_path+'green_channel.png')
+    print('plotted local intensity ')
 
     plt.figure(figsize=(10, 5))
     plt.plot(times_in_seconds[::2], avg_intensity[::2], color='green', label='Sampled')
@@ -200,6 +222,7 @@ def plotting(avg,g, path):
     plt.grid(True)
     plt.tight_layout()
     plt.savefig(video_path+'green_channel_every_other.png')
+
 
     for t, val in zip(times_in_seconds, avg_intensity):
         if 100 <= t <= 110:
@@ -217,7 +240,7 @@ def plotting(avg,g, path):
 
 
 
-def derivative(video_path,x,y):
+def derivative(title,video_path,x,y):
     fps = 30  
     #times_in_seconds = [i / fps for i in range(len(intensity))]
     
@@ -226,13 +249,14 @@ def derivative(video_path,x,y):
     #     title = 'Average Intensity'
     # elif np.array_equal(intensity,g):
     #     title = 'Point Intensity'
-    title = 'Area'
+
+
     y =gaussian_filter1d(y, sigma=2)
     d_intensity = np.gradient(y,x)
 
     print(len(x) )
     print(len(np.unique(x)))
-    titles='Rate of Change of '+ title
+    full_title='Rate of Change of '+ title
     plt.figure(figsize=(10, 5))
     plt.plot(x, d_intensity )
     plt.xlabel('Time (s)')
@@ -242,7 +266,7 @@ def derivative(video_path,x,y):
     
     plt.savefig(video_path+title+'derivative.png')
 
-    return x, titles, d_intensity
+    return x, full_title, d_intensity
 
 
 
@@ -267,7 +291,7 @@ def contours(folder, files, path, skip):
     high_h, high_w = height * upscale, width * upscale
     high_background = np.zeros((high_h, high_w, 3), dtype=np.uint8)
 
-    threshold_value = 200
+    threshold_value = 100
     alpha_values = np.linspace(0.05, 0.9, len(image_files))
 
     roi_mask = np.zeros(choose_img.shape[:2], dtype=np.uint8)
@@ -327,16 +351,22 @@ def contours(folder, files, path, skip):
                 high_background[:, :, c] * (1 - alpha) + 255 * alpha,
                 high_background[:, :, c]
             )
-
+        if filename =='frame_0300.jpg':
+            frame = img
+            contour_img = np.zeros_like(frame)
+            cv2.drawContours(img, contours_found, -1, (255, 255, 255), thickness=1)
+            cv2.imwrite('test_contours.png', img)
+            print('tested')
     # Downscale to original resolution
     final_image = cv2.resize(high_background, (width, height), interpolation=cv2.INTER_AREA)
     final_image = np.clip(final_image, 0, 255).astype(np.uint8)
 
+    
     cv2.imwrite(video_name + '_white_on_black_scaled.png', final_image)
     print("Saved", video_name + '_white_on_black_scaled.png')
 
 
-def black_contours(folder, files, start):
+def contours_velocity(folder, files, start):
 
     input_folder = folder
     for filename in os.listdir('tracked_frames'):
@@ -497,15 +527,14 @@ def black_contours(folder, files, start):
 
 
 
-def velocity_by_points(path,folder, files, start,end):
+def velocity_by_points(paths,folder, files, start,end):
     output_folder = 'point_tracked_frames'
     input_folder = folder
-    start = start-counter
     #x if taking video to the end
     if end == 'x':
-        image_files = files[counter:]
+        image_files = files
     else:
-        image_files = files[counter:int(end)]
+        image_files = files[:int(end)]
 
 
     os.makedirs(output_folder, exist_ok=True)
@@ -513,7 +542,7 @@ def velocity_by_points(path,folder, files, start,end):
         file_path = os.path.join('point_tracked_frames', filename)
         if os.path.isfile(file_path):
             os.remove(file_path)
-    fps = 30
+    
     
     image_paths = [os.path.join(input_folder, f) for f in image_files]
 
@@ -553,7 +582,11 @@ def velocity_by_points(path,folder, files, start,end):
 
 
     # ---------- TRACKING LOOP ----------
-    for i in range(start, len(image_paths), 10):
+    #can add skip here (in the range)
+    skip = 10
+    fps =30
+    effective_fps = fps/skip
+    for i in range(start, len(image_paths), skip):
         print(f"Processing frame {i}")
         path = image_paths[i]
         img = cv2.imread(path)
@@ -612,6 +645,7 @@ def velocity_by_points(path,folder, files, start,end):
 
     velocities = []
     valid_frames = []
+    
     for i in range(1, len(positions)):
         if positions[i] is None or positions[i - 1] is None:
             velocities.append(0)
@@ -621,7 +655,8 @@ def velocity_by_points(path,folder, files, start,end):
         x2, y2 = positions[i]
         dx, dy = x2 - x1, y2 - y1
         dist = np.sqrt(dx**2 + dy**2) * (mm_per_pixel)
-        velocity = dist * fps
+        dt = skip / fps
+        velocity = dist / dt
         velocities.append(velocity)
         valid_frames.append(i)
 
@@ -646,7 +681,8 @@ def velocity_by_points(path,folder, files, start,end):
     # Apply mask to both arrays
     filtered_velocities = velocities[mask]
     filtered_frames = valid_frames[mask]
-    time_second = [(f / 30)+(start/30) for f in filtered_frames]
+    dt = skip / fps
+    time_second = [i * dt for i in filtered_frames]
     time_seconds = [t - time_second[0] for t in time_second] 
     #velocities = gaussian_filter1d(velocities, sigma=2)
     x = time_seconds # time_seconds
@@ -666,21 +702,21 @@ def velocity_by_points(path,folder, files, start,end):
     # Smooth standard deviation for shaded area (optional)
     smoothed_std = gaussian_filter1d(std_dev, sigma=6) 
 
-    match = re.search(r'\d+', path)
+    match = re.search(r'\d+', paths)
     if match:
-        rate = int(match.group())  # ➝ 3
+        rate = int(match.group())  
         print("Rate (mL/min):", rate)
     else:
         raise ValueError("No number found in path")
 
-
+    ml_conversion = [(t*rate)/60 for t in time_second]
     # Plot smoothed velocity with shaded error
     title = "Velocity of Tracked Point (Smoothed)"
     plt.figure(figsize=(12, 6))
     #plt.scatter(time_seconds, filtered_velocities, color='blue', s=10, alpha=0.5, label='Raw Velocity')
-    plt.plot(time_seconds, smoothed_velocity, color='red', label='Smoothed Velocity')
+    plt.plot(ml_conversion, smoothed_velocity, color='red', label='Smoothed Velocity')
     plt.fill_between(
-        time_seconds,
+        ml_conversion,
         smoothed_velocity - smoothed_std,
         smoothed_velocity + smoothed_std,
         color='red',
@@ -688,7 +724,7 @@ def velocity_by_points(path,folder, files, start,end):
         label='±1 SD'
     )
 
-    plt.xlabel("Tracking Time (s)")
+    plt.xlabel("Pore Volume Delivered (ml)")
     plt.ylabel("Velocity (mm/s)")
     plt.title(title)
     plt.legend()
@@ -713,7 +749,7 @@ def velocity_by_points(path,folder, files, start,end):
    
 
     y_fit = exp_func(x_fit, a, b)
-    y_fit_at_data_points = exp_func(np.array(time_seconds), a, b)
+    
 
     # Standard error from the covariance matrix
     perr = np.sqrt(np.diag(cov))  # Standard error of a and b
@@ -729,8 +765,8 @@ def velocity_by_points(path,folder, files, start,end):
     title = "Velocity of Tracked Point (Exponential Fit)"
     plt.figure(figsize=(10, 6))
     plt.scatter(x, y, label='Data', alpha=0.5)
-    ml_conversion = [(t*rate)/60 for t in time_seconds]
-    plt.plot(ml_conversion, y_fit_at_data_points, color='red', label='Exponential Fit')
+    
+    plt.plot(x_fit, y_fit, color='red', label='Exponential Fit')
     #plt.fill_between(x_fit, y_fit - dy, y_fit + dy, color='red', alpha=0.2, label='±1σ Error Band')
     plt.xlabel("Pore Volume Delivered (ml)")
     plt.ylabel("Velocity (mm/s)")
@@ -742,7 +778,8 @@ def velocity_by_points(path,folder, files, start,end):
     
     #return time_seconds, title, smoothed_velocity, smoothed_std
     #return x_fit, title, y_fit,dy
-    return ml_conversion, title, smoothed_velocity, smoothed_std, y_fit_at_data_points
+    print(time_seconds,ml_conversion)
+    return ml_conversion, title, smoothed_velocity, smoothed_std,x_fit, y_fit
 
 
 
@@ -850,7 +887,7 @@ def area(path,frame_folder, threshold):
     # Plot
     fps=30
     title=  "Total Green Area Over Time"
-    print(counter*fps)
+    
     times_in_seconds = [i / fps for i in range(len(green_pixel_counts))]
     print(times_in_seconds)
     ml_conversion = [(t*rate)/60 for t in times_in_seconds]
@@ -946,8 +983,8 @@ def overlaid_plots(x_axes,dict,title, dict2 = {}, dict3={}):
     
 
     plt.title(title)
-    plt.xlabel("Pore Volume Delivered (ml) ")
-    plt.ylabel("d(Area)/dt (mm/s)")  
+    plt.xlabel("Time (s) ")
+    plt.ylabel("Intensity")  
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
@@ -968,27 +1005,36 @@ def get_values(*args):
         print("  counter:", counter)
        
         
-        #choose which plot to make overlaid version of
+#choose which plot to make overlaid version of
         # x_axes is dictionary where key is path and value is list of times, y is list of area
-        #area version
+    #area version
         #x_axes[arg], title, y_axis = area(arg,folder,50)
         # print('ran area')
 
-        #velocity version
+    #velocity version
         #std is list of standard deviation for error shading
+
+        #smoothed with std
         #x_axes[arg], title, y_axis, std = velocity_by_points(folder,files,int(input("Starting frame for "+arg) ))
+        
+        #smoothed+exponential+std
         #x_axes[arg], title, y_axis, std,y_axis_exp = velocity_by_points(arg,folder,files,int(input("Starting frame for "+arg) ), (input("Ending frame for "+arg)))
+        
+        #exponential with error
         # x_axes[arg], title, y_axis,dy = velocity_by_points(folder,files,int(input("Starting frame for "+arg) ))
         
-        #for derivative
-        x,title,y = area(arg,folder,50)
-        x_axes[arg], title, y_axis = derivative(path,x,y)
-
-        #x_axis, title, y_axis,na,na2 = plotting(avg,g, path)
+    #for derivative
+        # x,title,y = area(arg,folder,50)
+        # x_axes[arg], title, y_axis = derivative(title,path,x,y)
+        max = find_center(folder,files, counter)
+        avg,g = find_intensity(folder, files, max)
+        x_axes[arg], title, y_axis,na,na2 = plotting(avg,g, path)
         #x_axis, na, na2,title,x_axis = plotting(avg,g, path)
         
         #creates dictionary where key is path name and value is x values
         points[arg]=y_axis
+
+    #include if plotting any errors
         # if len(std)>0:
         #     error[arg] = std
         # elif len(dy)>0:
@@ -997,6 +1043,7 @@ def get_values(*args):
         #     print("no std")
         # print('added line values')
 
+    #include if plotting exponential fit
         # if len(y_axis_exp)>0: 
         #     points2[arg]=y_axis_exp
         
@@ -1011,34 +1058,49 @@ def get_values(*args):
 
 
 
-
-path = '1mlmin_22C_Trimmed.MP4' 
+#always leave uncommented-----
+path = '3mlmin_22C.MP4' 
 video_name = os.path.splitext(os.path.basename(path))[0]
 mm_per_pixel = 60/378.08
 equations = []
+
+#one or the other--------
 folder, files, counter = extract(path)
-#max = find_center(folder,files, counter)
-#avg,g = find_intensity(folder, files, max)
-#plotting(avg,g,path)
-#derivative(path,avg)
+
 #folder = 'frames/'
 #files = sorted(f for f in os.listdir(folder) if f.endswith(('.png', '.jpg')))
 
-#black_contours(folder,files, 570)
+#INTENSITY-------
+max = find_center(folder,files, counter)
+avg,g = find_intensity(folder, files, max)
+x,title,y,title2,y2 =plotting(avg,g,path)
+#derivative(title,path,x,y)
+#derivative(title2,path,x,y2)
 
+
+#VELOCITY-----
 #last two arguments are staring and ending frames (x just goes to end)
-velocity_by_points(path,folder,files,480,'x')
+#velocity_by_points(path,folder,files,210,'x')
 #print(len(files))
+
+#CONTOURS----
 #contours(folder,files,path,50)
+
+#VIDEOS---
+#frames_to_video('frames',video_name+'green_video.mp4')
 #frames_to_video('tracked_frames',video_name+'tracked_video.mp4')
 #frames_to_video('point_tracked_frames',video_name+'point_tracked_video.mp4')
+
+#AREA-----
 #x,title,y=area(folder,50)
-# derivative(path,x,y)
+# derivative(title,path,x,y)
+
+
 points = {}
 points2={}
 error = {}
-counter = 0
 
+#COMPARISON PLOTS---------
 #overlaid_plots(*get_values('1mlmin_22C_Trimmed.MP4','3mlmin_22C.MP4','5mlmin_trimmed.MP4'))
 print(equations)
 
